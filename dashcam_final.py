@@ -3,6 +3,7 @@ import numpy as np
 import onnxruntime as ort
 import time
 import os
+from picamera2 import Picamera2
 
 # ---------------- CONFIG ----------------
 YOLO_MODEL = "yolov8n_int8.onnx"
@@ -37,18 +38,11 @@ seg_input = seg_session.get_inputs()[0].name
 
 print("✅ Models loaded")
 
-# ---------------- CAMERA INIT ----------------
+# ---------------- CAMERA INIT (FIXED) ----------------
 print("Opening camera...")
 
-cap = cv2.VideoCapture(0)
-
-if not cap.isOpened():
-    print("⚠️ Trying fallback camera...")
-    cap = cv2.VideoCapture("/dev/video0")
-
-if not cap.isOpened():
-    print("❌ Camera not accessible")
-    exit()
+picam2 = Picamera2()
+picam2.start()
 
 print("✅ Camera started")
 
@@ -73,7 +67,6 @@ def run_yolo(frame):
             return []
 
         output = outputs[0]
-
         detections = []
 
         for det in output[0]:
@@ -108,11 +101,14 @@ frame_count = 0
 last_alert = 0
 
 while True:
-    ret, frame = cap.read()
+    frame = picam2.capture_array()
 
-    if not ret or frame is None:
+    if frame is None:
         print("❌ Frame read failed")
         continue
+
+    # resize for performance (IMPORTANT for RealVNC)
+    frame = cv2.resize(frame, (640, 480))
 
     frame_count += 1
 
@@ -136,17 +132,14 @@ while True:
         x2 = int(x2 * w / INPUT_SIZE)
         y2 = int(y2 * h / INPUT_SIZE)
 
-        # draw box
         cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
 
-        # center zone alert
         if w * 0.3 < x1 < w * 0.7:
             alert_msg = "⚠️ OBJECT AHEAD"
 
     # -------- SEG FAIL SAFE --------
-    if seg_output is None:
-        if alert_msg == "":
-            alert_msg = "⚠️ LOW VISIBILITY"
+    if seg_output is None and alert_msg == "":
+        alert_msg = "⚠️ LOW VISIBILITY"
 
     # -------- ALERT DISPLAY --------
     if alert_msg:
@@ -160,11 +153,9 @@ while True:
     # -------- SHOW --------
     cv2.imshow("okDriver AI", frame)
 
-    # -------- EXIT --------
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
 
 # ---------------- CLEANUP ----------------
-cap.release()
 cv2.destroyAllWindows()
 print("✅ Closed safely")
